@@ -1,0 +1,23 @@
+{
+  "name": "pi-handoff",
+  "version": "1.0.0",
+  "description": "Simple handoff extension for pi sessions — save a concise continuation note and start a fresh session",
+  "keywords": ["pi-package", "pi-extension", "pi", "handoff", "session"],
+  "author": "Lucas Stellet",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucas-stellet/pi-handoff.git"
+  },
+  "homepage": "https://github.com/lucas-stellet/pi-handoff#readme",
+  "bugs": {
+    "url": "https://github.com/lucas-stellet/pi-handoff/issues"
+  },
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/*.test.ts"
+  }
+}
