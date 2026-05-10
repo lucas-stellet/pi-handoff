@@ -95,6 +95,18 @@ describe("buildContinuationPrompt", () => {
     assert.doesNotMatch(prompt, /<handoff>/);
     assert.doesNotMatch(prompt, /Current Objective/);
   });
+
+  it("appends the user's next-session focus after the automatic continuation message", () => {
+    const prompt = buildContinuationPrompt({
+      handoffPath: "/repo/.handoff/refactor-handoff-command.md",
+      focus: "continue with the failing test",
+    });
+
+    assert.equal(
+      prompt,
+      "This session continues from a previous Pi session. Read `/repo/.handoff/refactor-handoff-command.md`, continue from where the last agent stopped, and ask the user if anything is unclear.\n\ncontinue with the failing test",
+    );
+  });
 });
 
 describe("formatGitContext", () => {
@@ -165,6 +177,7 @@ describe("createHandoffArtifacts", () => {
     assert.match(artifacts.handoff, /# Handoff/);
     assert.doesNotMatch(artifacts.continuationPrompt, /# Handoff/);
     assert.match(artifacts.continuationPrompt, /\/repo\/.handoff\/refactor-handoff-command\.md/);
+    assert.match(artifacts.continuationPrompt, /\n\nfocus on tests$/);
     assert.deepEqual(writes, [{ path: artifacts.handoffPath, content: artifacts.handoff }]);
   });
 });

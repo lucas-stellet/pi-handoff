@@ -86,8 +86,11 @@ export const extractConversationText = (entries: SessionLikeEntry[]): string => 
   return sections.join("\n\n");
 };
 
-export const buildContinuationPrompt = ({ handoffPath }: { handoffPath: string }): string => {
-  return `This session continues from a previous Pi session. Read \`${handoffPath}\`, continue from where the last agent stopped, and ask the user if anything is unclear.`;
+export const buildContinuationPrompt = ({ handoffPath, focus }: { handoffPath: string; focus?: string }): string => {
+  const basePrompt = `This session continues from a previous Pi session. Read \`${handoffPath}\`, continue from where the last agent stopped, and ask the user if anything is unclear.`;
+  const trimmedFocus = focus?.trim();
+
+  return trimmedFocus ? `${basePrompt}\n\n${trimmedFocus}` : basePrompt;
 };
 
 const available = (value: string | undefined): string => {
@@ -197,6 +200,6 @@ export const createHandoffArtifacts = async ({
   return {
     handoff,
     handoffPath,
-    continuationPrompt: buildContinuationPrompt({ handoffPath }),
+    continuationPrompt: buildContinuationPrompt({ handoffPath, focus }),
   };
 };
