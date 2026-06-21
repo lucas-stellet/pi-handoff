@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
   buildContinuationPrompt,
+  buildExtractiveHandoff,
   buildGenerationPrompt,
   buildFallbackGenerationPrompt,
   buildHandoffPath,
@@ -162,6 +163,23 @@ describe("buildFallbackGenerationPrompt", () => {
   });
 });
 
+describe("buildExtractiveHandoff", () => {
+  it("creates non-empty Markdown without model output", () => {
+    const handoff = buildExtractiveHandoff({
+      sessionId: "session-123",
+      gitContext: "Branch: main\nStatus:\n M file.ts",
+      focus: "ship the fix",
+      failureReason: "Generated handoff was empty",
+    });
+
+    assert.match(handoff, /^# Handoff/);
+    assert.match(handoff, /ship the fix/);
+    assert.match(handoff, /Session id: `session-123`/);
+    assert.match(handoff, /Branch: main/);
+    assert.match(handoff, /Generated handoff was empty/);
+  });
+});
+
 describe("createHandoffArtifacts", () => {
   it("uses the session name for the handoff filename and returns a path-only continuation prompt", async () => {
     const writes: Array<{ path: string; content: string }> = [];
@@ -225,6 +243,38 @@ describe("createHandoffArtifacts", () => {
     assert.equal(prompts.length, 2);
     assert.match(prompts[1].userPrompt, /Failure reason:\nGenerated handoff was empty/);
     assert.equal(artifacts.handoff, "# Handoff\n\n- Objective\n- Done\n- Next");
+  });
+
+  it("writes a deterministic fallback handoff when both model attempts are empty", async () => {
+    const writes: Array<{ path: string; content: string }> = [];
+    const artifacts = await createHandoffArtifacts({
+      cwd: "/repo",
+      sessionName: "Deterministic fallback",
+      sessionId: "session-123",
+      focus: "continue from the fallback",
+      entries: [
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Create a handoff" }],
+          },
+        },
+      ],
+      collectGitContext: async () => ({ branch: "main", status: " M src/handoff.ts" }),
+      generateHandoff: async () => "   ",
+      writeTextFile: async (path: string, content: string) => {
+        writes.push({ path, content });
+      },
+    });
+
+    assert.match(artifacts.handoff, /^# Handoff/);
+    assert.match(artifacts.handoff, /deterministic fallback/);
+    assert.match(artifacts.handoff, /Session id: `session-123`/);
+    assert.doesNotMatch(artifacts.handoff, /User: Create a handoff/);
+    assert.match(artifacts.handoff, /continue from the fallback/);
+    assert.match(artifacts.handoff, /M src\/handoff\.ts/);
+    assert.deepEqual(writes, [{ path: artifacts.handoffPath, content: artifacts.handoff }]);
   });
 
   it("retries with the thrown error reason when the first generation attempt fails", async () => {

@@ -201,14 +201,59 @@ export const buildFallbackGenerationPrompt = ({
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+export const buildExtractiveHandoff = ({
+  sessionId,
+  gitContext,
+  focus,
+  failureReason,
+}: {
+  sessionId: string;
+  gitContext: string;
+  focus?: string;
+  failureReason?: string;
+}): string => {
+  const trimmedFocus = focus?.trim();
+
+  return [
+    "# Handoff",
+    "",
+    "This handoff was generated with a deterministic fallback because the model did not return usable handoff text.",
+    "",
+    "## Current objective",
+    trimmedFocus ? `- ${trimmedFocus}` : "- Continue the work captured in the source Pi session.",
+    "",
+    "## Source session",
+    `- Session id: \`${sessionId}\``,
+    "- Re-open or inspect that session for the full conversation context.",
+    "",
+    "## Repository context",
+    "```text",
+    gitContext.trim() || "Not available",
+    "```",
+    "",
+    "## Next steps",
+    "- Inspect the source session and repository status before making changes.",
+    "- Verify whether any mentioned tests, issues, PRs, or local changes still need follow-up.",
+    "- Ask the user for clarification if the next action is ambiguous.",
+    ...(failureReason ? ["", "## Fallback note", `- Model handoff generation failed with: ${failureReason}`] : []),
+  ].join("\n");
+};
+
 const generateHandoffWithFallback = async ({
   generationPrompt,
+  sessionId,
+  gitContext,
+  focus,
   generateHandoff,
 }: {
   generationPrompt: { systemPrompt: string; userPrompt: string };
+  sessionId: string;
+  gitContext: string;
+  focus?: string;
   generateHandoff: CreateHandoffArtifactsInput["generateHandoff"];
 }): Promise<string> => {
   let firstFailureReason = "Generated handoff was empty";
+  let fallbackFailureReason = "Generated handoff was empty after fallback retry";
 
   try {
     const handoff = (await generateHandoff(generationPrompt)).trim();
@@ -221,12 +266,19 @@ const generateHandoffWithFallback = async ({
     originalPrompt: generationPrompt,
     failureReason: firstFailureReason,
   });
-  const fallbackHandoff = (await generateHandoff(fallbackPrompt)).trim();
-  if (!fallbackHandoff) {
-    throw new Error(`Generated handoff was empty after fallback retry (first failure: ${firstFailureReason})`);
+  try {
+    const fallbackHandoff = (await generateHandoff(fallbackPrompt)).trim();
+    if (fallbackHandoff) return fallbackHandoff;
+  } catch (error) {
+    fallbackFailureReason = errorMessage(error);
   }
 
-  return fallbackHandoff;
+  return buildExtractiveHandoff({
+    sessionId,
+    gitContext,
+    focus,
+    failureReason: `${fallbackFailureReason} (first failure: ${firstFailureReason})`,
+  });
 };
 
 export const createHandoffArtifacts = async ({
@@ -246,7 +298,13 @@ export const createHandoffArtifacts = async ({
 
   const gitContext = formatGitContext(await collectGitContext());
   const generationPrompt = buildGenerationPrompt({ conversationText, gitContext, focus });
-  const handoff = await generateHandoffWithFallback({ generationPrompt, generateHandoff });
+  const handoff = await generateHandoffWithFallback({
+    generationPrompt,
+    sessionId,
+    gitContext,
+    focus,
+    generateHandoff,
+  });
 
   const handoffPath = buildHandoffPath(cwd, sessionName?.trim() || sessionId);
   await writeTextFile(handoffPath, handoff);
