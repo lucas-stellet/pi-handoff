@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildContinuationPrompt,
   buildGenerationPrompt,
+  buildFallbackGenerationPrompt,
   buildHandoffPath,
   createHandoffArtifacts,
   extractConversationText,
@@ -144,6 +145,23 @@ describe("buildGenerationPrompt", () => {
   });
 });
 
+describe("buildFallbackGenerationPrompt", () => {
+  it("includes the failure reason and asks for non-empty Markdown", () => {
+    const prompt = buildFallbackGenerationPrompt({
+      originalPrompt: {
+        systemPrompt: "system",
+        userPrompt: "original request",
+      },
+      failureReason: "Generated handoff was empty",
+    });
+
+    assert.match(prompt.systemPrompt, /previous handoff generation attempt failed/);
+    assert.match(prompt.userPrompt, /Generated handoff was empty/);
+    assert.match(prompt.userPrompt, /Output at least one Markdown heading and three bullets/);
+    assert.match(prompt.userPrompt, /original request/);
+  });
+});
+
 describe("createHandoffArtifacts", () => {
   it("uses the session name for the handoff filename and returns a path-only continuation prompt", async () => {
     const writes: Array<{ path: string; content: string }> = [];
@@ -179,5 +197,62 @@ describe("createHandoffArtifacts", () => {
     assert.match(artifacts.continuationPrompt, /\/repo\/.handoff\/refactor-handoff-command\.md/);
     assert.match(artifacts.continuationPrompt, /\n\nfocus on tests$/);
     assert.deepEqual(writes, [{ path: artifacts.handoffPath, content: artifacts.handoff }]);
+  });
+
+  it("retries with a fallback prompt when the first generated handoff is empty", async () => {
+    const prompts: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const artifacts = await createHandoffArtifacts({
+      cwd: "/repo",
+      sessionName: "Retry test",
+      sessionId: "session-123",
+      entries: [
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Create a handoff" }],
+          },
+        },
+      ],
+      collectGitContext: async () => ({}),
+      generateHandoff: async (prompt) => {
+        prompts.push(prompt);
+        return prompts.length === 1 ? "   " : "# Handoff\n\n- Objective\n- Done\n- Next";
+      },
+      writeTextFile: async () => {},
+    });
+
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1].userPrompt, /Failure reason:\nGenerated handoff was empty/);
+    assert.equal(artifacts.handoff, "# Handoff\n\n- Objective\n- Done\n- Next");
+  });
+
+  it("retries with the thrown error reason when the first generation attempt fails", async () => {
+    const prompts: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const artifacts = await createHandoffArtifacts({
+      cwd: "/repo",
+      sessionName: "Thrown retry test",
+      sessionId: "session-123",
+      entries: [
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Create a handoff" }],
+          },
+        },
+      ],
+      collectGitContext: async () => ({}),
+      generateHandoff: async (prompt) => {
+        prompts.push(prompt);
+        if (prompts.length === 1) throw new Error("provider returned no text blocks");
+        return "# Handoff\n\n- Objective\n- Done\n- Next";
+      },
+      writeTextFile: async () => {},
+    });
+
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1].userPrompt, /provider returned no text blocks/);
+    assert.match(artifacts.handoff, /# Handoff/);
   });
 });

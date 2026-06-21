@@ -172,6 +172,63 @@ export const buildGenerationPrompt = ({
   };
 };
 
+export const buildFallbackGenerationPrompt = ({
+  originalPrompt,
+  failureReason,
+}: {
+  originalPrompt: { systemPrompt: string; userPrompt: string };
+  failureReason: string;
+}): { systemPrompt: string; userPrompt: string } => ({
+  systemPrompt: [
+    originalPrompt.systemPrompt,
+    "The previous handoff generation attempt failed.",
+    "Use a different, more direct strategy and always output non-empty Markdown text.",
+  ].join("\n"),
+  userPrompt: [
+    "The previous attempt to generate a handoff failed.",
+    "Failure reason:",
+    failureReason.trim() || "Unknown failure",
+    "",
+    "Retry with a simpler strategy:",
+    "- Output at least one Markdown heading and three bullets.",
+    "- If most work is already captured elsewhere, reference those artifacts instead of returning an empty answer.",
+    "- Do not explain the retry or mention this failure in the handoff.",
+    "",
+    "Original handoff request:",
+    originalPrompt.userPrompt,
+  ].join("\n"),
+});
+
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+const generateHandoffWithFallback = async ({
+  generationPrompt,
+  generateHandoff,
+}: {
+  generationPrompt: { systemPrompt: string; userPrompt: string };
+  generateHandoff: CreateHandoffArtifactsInput["generateHandoff"];
+}): Promise<string> => {
+  let firstFailureReason = "Generated handoff was empty";
+
+  try {
+    const handoff = (await generateHandoff(generationPrompt)).trim();
+    if (handoff) return handoff;
+  } catch (error) {
+    firstFailureReason = errorMessage(error);
+  }
+
+  const fallbackPrompt = buildFallbackGenerationPrompt({
+    originalPrompt: generationPrompt,
+    failureReason: firstFailureReason,
+  });
+  const fallbackHandoff = (await generateHandoff(fallbackPrompt)).trim();
+  if (!fallbackHandoff) {
+    throw new Error(`Generated handoff was empty after fallback retry (first failure: ${firstFailureReason})`);
+  }
+
+  return fallbackHandoff;
+};
+
 export const createHandoffArtifacts = async ({
   cwd,
   sessionName,
@@ -189,10 +246,7 @@ export const createHandoffArtifacts = async ({
 
   const gitContext = formatGitContext(await collectGitContext());
   const generationPrompt = buildGenerationPrompt({ conversationText, gitContext, focus });
-  const handoff = (await generateHandoff(generationPrompt)).trim();
-  if (!handoff) {
-    throw new Error("Generated handoff was empty");
-  }
+  const handoff = await generateHandoffWithFallback({ generationPrompt, generateHandoff });
 
   const handoffPath = buildHandoffPath(cwd, sessionName?.trim() || sessionId);
   await writeTextFile(handoffPath, handoff);
