@@ -18,6 +18,28 @@ const writeTextFileToDisk = async (path: string, content: string): Promise<void>
   await writeFile(path, content, "utf8");
 };
 
+// A session replacement invalidates the captured pi/command ctx, so the session
+// model and thinking level are stashed before the switch and re-applied once the
+// new session starts, where the session_start handler gets a fresh, active pi.
+let pendingSessionCarry: { model: any; thinkingLevel?: string } | undefined;
+
+export const applyPendingSessionCarry = async (pi: any, ctx: any): Promise<void> => {
+  const carry = pendingSessionCarry;
+  pendingSessionCarry = undefined;
+  if (!carry) return;
+
+  const kept = await pi.setModel(carry.model);
+  if (!kept) {
+    ctx.ui.notify(`Could not keep ${carry.model.provider}/${carry.model.id} in the new session`, "warning");
+    return;
+  }
+
+  // setModel applies the level for the new model, so the carried level is applied after it.
+  if (carry.thinkingLevel) {
+    pi.setThinkingLevel(carry.thinkingLevel);
+  }
+};
+
 const textFromCompletion = (content: Array<{ type: string; text?: string }>): string => {
   return content
     .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
@@ -85,6 +107,7 @@ export const createHandoffCommand = (pi: any, completion: CompletionFunction) =>
     ctx.ui.notify("Generating handoff...", "info");
 
     const model = ctx.model;
+    const thinkingLevel = ctx.thinkingLevel;
     const artifacts = await createHandoffArtifacts({
       cwd: ctx.cwd,
       sessionName,
@@ -114,13 +137,19 @@ export const createHandoffCommand = (pi: any, completion: CompletionFunction) =>
 
     if (!artifacts) return;
 
-    const result = await ctx.newSession({
-      parentSession: currentSessionFile,
-      withSession: async (replacementCtx: any) => {
-        replacementCtx.ui.notify(`Handoff saved: ${artifacts.handoffPath}`, "info");
-        await replacementCtx.sendUserMessage(artifacts.continuationPrompt);
-      },
-    });
+    pendingSessionCarry = { model, thinkingLevel };
+    let result: { cancelled: boolean };
+    try {
+      result = await ctx.newSession({
+        parentSession: currentSessionFile,
+        withSession: async (replacementCtx: any) => {
+          replacementCtx.ui.notify(`Handoff saved: ${artifacts.handoffPath}`, "info");
+          await replacementCtx.sendUserMessage(artifacts.continuationPrompt);
+        },
+      });
+    } finally {
+      pendingSessionCarry = undefined;
+    }
 
     if (result.cancelled) {
       ctx.ui.notify("New session cancelled", "info");

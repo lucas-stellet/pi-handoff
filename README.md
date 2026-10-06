@@ -27,7 +27,7 @@ The command:
 1. Reads the current session's user and assistant text.
 2. Generates a concise Markdown handoff.
 3. Saves it under `.handoff/<session-name-or-id>.md` in the current project.
-4. Starts a new Pi session with `parentSession` set to the previous session.
+4. Starts a new Pi session with `parentSession` set to the previous session and keeps the current model and thinking level selected.
 5. Inserts a short continuation prompt that references the saved handoff file instead of pasting the whole handoff into the editor.
 
 If arguments are provided, they are treated as the focus for the next session.

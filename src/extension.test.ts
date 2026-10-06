@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHandoffCommand } from "./command.ts";
+import { applyPendingSessionCarry, createHandoffCommand } from "./command.ts";
 
 describe("handoff command", () => {
-  it("declares argument support and sends the continuation prompt with the user's argument to the new session", async () => {
+  it("declares argument support, keeps the session model and thinking level for the new session, and sends the continuation prompt", async () => {
+    const sentMessages: string[] = [];
+    const events: string[] = [];
+    const sessionModel = { provider: "test-provider", id: "session-model" };
     const pi: any = {
       exec: async () => ({ code: 0, stdout: "" }),
       getSessionName: () => "Test Session",
+      setModel: async (model: any) => {
+        events.push(`setModel:${model.provider}/${model.id}`);
+        return true;
+      },
+      setThinkingLevel: (level: string) => {
+        events.push(`setThinkingLevel:${level}`);
+      },
     };
 
     const completion = async () => ({
@@ -17,14 +27,14 @@ describe("handoff command", () => {
 
     assert.equal(typeof registeredCommand.getArgumentCompletions, "function");
 
-    const sentMessages: string[] = [];
     const ctx: any = {
       waitForIdle: async () => {},
       hasUI: true,
       ui: {
         notify: () => {},
       },
-      model: { provider: "test-provider" },
+      model: sessionModel,
+      thinkingLevel: "high",
       modelRegistry: {
         getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test-key", headers: {} }),
       },
@@ -43,10 +53,14 @@ describe("handoff command", () => {
         getSessionId: () => "session-123",
       },
       cwd: "/tmp/pi-handoff-test",
+      // Mirrors the host runtime: session_start for the replacement session runs
+      // before withSession, and the extension re-applies the carried model there.
       newSession: async ({ withSession }: any) => {
+        await applyPendingSessionCarry(pi, { ui: { notify: () => {} } });
         await withSession({
           ui: { notify: () => {} },
           sendUserMessage: async (message: string) => {
+            events.push("sendUserMessage");
             sentMessages.push(message);
           },
         });
@@ -59,5 +73,10 @@ describe("handoff command", () => {
     assert.equal(sentMessages.length, 1);
     assert.match(sentMessages[0], /Read `\/tmp\/pi-handoff-test\/\.handoff\/test-session\.md`/);
     assert.match(sentMessages[0], /\n\ncontinue with the failing test$/);
+    assert.deepEqual(events, [
+      "setModel:test-provider/session-model",
+      "setThinkingLevel:high",
+      "sendUserMessage",
+    ]);
   });
 });
